@@ -1,0 +1,88 @@
+---
+title: "testing"
+author: "Louise"
+date: "2025-11-28"
+output: html_document
+---
+
+---
+title: "Users per District Map"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(leaflet)
+library(sf)
+library(dplyr)
+library(htmltools)
+
+# --- Load districts shapefile ---
+
+districts <- readRDS("C:/Users/louis/Desktop/R/Network Rail/Geotargeting/simplified_districts_merged.rds")
+districts <- st_as_sf(districts)
+district_id_col <- "LAD11NM"
+
+# --- Load user CSV in background ---
+
+user_df <- read.csv("C:/Users/louis/Desktop/R/Data set (must lat lon)/testing data.csv")
+user_df <- user_df %>%
+filter(!is.na(lat), !is.na(lon)) %>%
+filter(between(lat, -90, 90), between(lon, -180, 180))
+
+# --- Prepare summary data ---
+
+user_sf <- st_as_sf(user_df, coords = c("lon", "lat"), crs = 4326)
+user_sf <- st_transform(user_sf, st_crs(districts))
+joined <- st_join(user_sf, districts, left = FALSE)
+
+user_summary <- joined %>%
+group_by(.data[[district_id_col]]) %>%
+summarise(total_users = sum(Total_users, na.rm = TRUE), .groups = "drop")
+
+summary_df <- left_join(
+st_drop_geometry(districts),
+st_drop_geometry(user_summary),
+by = district_id_col
+)
+summary_df$total_users[is.na(summary_df$total_users)] <- 0
+
+
+# --- Prepare map ---
+
+```{r leaflet-map, echo=FALSE}
+library(htmltools) # Add this line
+
+shp_sf <- left_join(districts, summary_df, by = district_id_col) %>%
+  filter(total_users > 0)
+
+shp_sf$label_text <- paste0(
+  "District: ", shp_sf[[district_id_col]], "<br>Number of search: ", shp_sf$total_users
+)
+
+bins <- c(0, 100, 200, 300, 400, Inf)
+colors <- c("#deebf7", "#9ecae1", "#4292c6", "#2171b5", "#084594")
+
+pal <- colorBin(
+  palette = colors,
+  bins = bins,
+  domain = shp_sf$total_users,
+  right = FALSE,
+  na.color = "transparent"
+)
+
+leaflet(shp_sf) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~pal(total_users),
+    weight = 2,
+    color = "grey",
+    fillOpacity = 0.7,
+    label = ~lapply(label_text, HTML),  # now HTML() is defined
+    highlightOptions = highlightOptions(color = "black", weight = 2, bringToFront = TRUE)
+  ) %>%
+  addLegend(
+    colors = colors,
+    labels = c("1-100", "101-200", "201-300", "301-400", "401+"),
+    title = "Number of search",
+    position = "bottomright"
+  )
